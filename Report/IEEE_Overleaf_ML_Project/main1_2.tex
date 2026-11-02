@@ -1,0 +1,182 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite,amsmath,amssymb,graphicx,booktabs,array,multirow,url,balance}
+
+\title{A Comparative Study of Regression, Classification, and Clustering for Practical Machine Learning}
+\author{\IEEEauthorblockN{Md Ismail Hossain}\IEEEauthorblockA{MSc Applied Artificial Intelligence\\South East Technological University, Ireland\\Email: ismail.ru.cse@gmail.com}}
+\begin{document}
+\maketitle
+\begin{abstract}
+This paper reports three practical machine-learning investigations: walking-speed regression using BLE-GSpeed, binary network intrusion detection using NSL-KDD, and unsupervised product-title clustering. The projects required different preprocessing and evaluation strategies. BLE-GSpeed contains approximately 910,780 observations but only about 382 labelled walking sessions, with one speed label per session. Initial window-level models performed poorly; session-level aggregation produced a strong tuned Random Forest validation result (MAE=0.01302, RMSE=0.01880, $R^2=0.99617$). For NSL-KDD, Logistic Regression, KNN, and Decision Tree were compared using stratified train-validation-test splits, training-only scaling, and SMOTE on training data only. Decision Tree achieved 99.54\% test accuracy and 99.51\% attack F1, while KNN achieved the highest ROC-AUC and PR-AUC but slower prediction. For product clustering, TF-IDF represented 35,311 titles using 37,178 terms. K-Means++ with $K=14$ achieved the highest sampled cosine silhouette score among tested values (0.0489); DBSCAN found 273 clusters and marked 46.71\% of a 10,000-title sample as noise. These findings highlight the importance of matching representations to label structure, preventing leakage, and interpreting metrics critically.
+\end{abstract}
+
+\section{Introduction}
+This project applies regression, supervised classification, and unsupervised clustering to three practical datasets. The aim is to develop reproducible preprocessing pipelines, compare candidate methods using appropriate metrics, and discuss limitations. The results are not directly rankable across tasks because each has a different objective and evaluation criterion.
+
+\section{Datasets}
+\subsection{BLE-GSpeed}
+The dataset contains approximately 910,780 rows and eight columns: \texttt{mac}, \texttt{rssi}, \texttt{device}, \texttt{timestamp}, \texttt{user}, \texttt{direction}, \texttt{walk\_id}, and \texttt{speed}. Measurements are grouped into about 382 walking sessions, each with one speed label. The task predicts a continuous speed value.
+\subsection{NSL-KDD}
+The task is binary classification: normal connections are mapped to 0 and attack connections to 1. Logistic Regression, K-Nearest Neighbours (KNN), and Decision Tree are compared. Attack recall is important because a false negative is an attack incorrectly labelled normal.
+\subsection{Product titles}
+The product dataset contains 35,311 rows and seven columns: Product ID, Product Title, Merchant ID, Cluster ID, Cluster Label, Category ID, and Category Label. No missing cells or exact duplicate rows were reported. There are 30,993 unique title strings and 3,184 distinct titles occur more than once. Only Product Title is used as clustering input; existing cluster/category fields are reserved for post-hoc interpretation.
+
+\section{Preprocessing and Feature Engineering}
+\subsection{BLE-GSpeed}
+RSSI varies with distance, device orientation, body obstruction, multipath propagation, interference, hardware, and environment. After chronological sorting, missing RSSI values were forward-filled only within the same user, session, and device. This avoids propagating measurements across unrelated sessions. The initial workflow aggregated irregular observations into 500-ms windows and extracted RSSI statistics (mean, median, standard deviation, minimum, maximum, range, and counts where available). Temporal features such as lagged values, changes, and trailing summaries were explored within sessions without using future observations. Raw identifiers and timestamps were not treated as direct predictors.
+The principal difficulty was a mismatch between observation and label units: many correlated BLE measurements share a single session-level speed label. Treating every observation as independent can inflate the apparent sample size and create leakage if windows from one walk are split across partitions. We therefore aggregated window features into one feature row per labelled session. This better matches the data-generating process and reduces short-term signal noise. However, session-level estimation is not equivalent to real-time prediction from a single short window.
+\begin{table*}[t]
+\caption{BLE-GSpeed preprocessing: before and after}
+\centering\small
+\begin{tabular}{p{0.17\textwidth}p{0.26\textwidth}p{0.31\textwidth}p{0.18\textwidth}}
+\toprule Stage & Before & Treatment / after & Purpose\\\midrule
+Raw data & $\sim$910,780 rows, 8 columns & Schema and quality checks; raw rows retained as source & Establish structure\\
+Missing RSSI & Missing readings possible & Forward-fill within chronological user/session/device group; unresolved leading gaps handled downstream & Avoid cross-session contamination\\
+Temporal representation & Irregular observations & Initial 500-ms windows with RSSI summaries & Reduce irregularity/noise\\
+Temporal features & Window summaries & Lagged values, changes and trailing summaries tested within sessions & Capture dynamics without future data\\
+Model input & Repeated windows share one speed label & Session aggregation, about 382 labelled examples & Match feature and label units\\
+Validation & Related windows may cross partitions under random row split & Keep sessions intact across partitions; fit transforms on training only & Reduce optimistic estimates\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{NSL-KDD}
+Column names were stripped of whitespace, lowercased, and cleaned of trailing punctuation. The workflow drops columns containing any missing values and then removes constant columns. It removes the same eight correlated features as the earlier experiment: \texttt{num\_root}, \texttt{srv\_serror\_rate}, \texttt{srv\_rerror\_rate}, \texttt{dst\_host\_srv\_serror\_rate}, \texttt{dst\_host\_serror\_rate}, \texttt{dst\_host\_rerror\_rate}, \texttt{dst\_host\_srv\_rerror\_rate}, and \texttt{dst\_host\_same\_srv\_rate}. \texttt{protocol\_type} was mapped as ICMP=0, TCP=1, UDP=2; \texttt{flag} retained the original mapping; and \texttt{service} was dropped.
+A stratified 70/15/15 train-validation-test split was used. Median imputation and MinMax scaling were fitted on training data only. SMOTE was applied only to scaled training data; validation and test distributions remained unchanged. This avoids leakage from fitting a scaler or creating synthetic examples before splitting. Integer mappings for protocol and flag preserve the prior workflow but impose artificial ordering; one-hot encoding is a possible future comparison.
+\begin{table*}[t]
+\caption{NSL-KDD preprocessing: before and after}
+\centering\small
+\begin{tabular}{p{0.17\textwidth}p{0.25\textwidth}p{0.32\textwidth}p{0.18\textwidth}}
+\toprule Stage & Before & Treatment / after & Purpose / caveat\\\midrule
+Target & Normal and multiple attack labels & Normal=0; non-normal=1 & Binary IDS task\\
+Missing/constant fields & Potential missing and constant columns & Drop columns containing missing values; remove constants & Column-wise deletion\\
+Feature reduction & Standard connection features & Remove eight correlated features and drop service & Preserve earlier choices\\
+Categorical fields & Protocol and flag strings & Original integer mappings retained & Artificial order may be imposed\\
+Data split & Full cleaned matrix & Stratified 70/15/15 train/validation/test & Keep final test held out\\
+Imputation/scaling & Different scales and possible unmapped values & Median imputer and MinMaxScaler fitted on training only & Prevent leakage; supports KNN\\
+Class imbalance & Original training distribution & SMOTE on training data only & Held-out sets remain unchanged\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Product-title text}
+Column whitespace was stripped. Repeated titles were retained because different merchants can list the same item; there were no exact duplicate rows. Product IDs, merchant IDs, existing cluster labels, and category labels were excluded from model input to prevent metadata leakage. TF-IDF used lowercasing, accent stripping, word unigrams and bigrams, minimum document frequency 2, maximum document frequency 0.98, sublinear term frequency, and L2 normalisation. The matrix shape was $35{,}311 \times 37{,}178$ with density 0.000409 (about 0.041\%). Unigrams capture terms such as ``iphone'' and ``64gb'', while bigrams capture phrases such as ``iphone 8'' and ``washing machine''. For DBSCAN, a 10,000-title sample was reduced to 50 dimensions using TruncatedSVD and L2-normalised; the summed explained variance ratio was 0.1676.
+\begin{table}[t]
+\caption{Product-title preprocessing}
+\centering\scriptsize
+\begin{tabular}{p{0.22\columnwidth}p{0.29\columnwidth}p{0.36\columnwidth}}
+\toprule Stage & Before & Treatment / after\\\midrule
+Dataset & 35,311 rows, 7 columns & Column names stripped of whitespace\\
+Quality & Repeated titles & 0 missing cells, 0 exact duplicate rows; 30,993 unique title strings\\
+Model input & IDs, title and reference labels & Product Title only\\
+Text features & Raw strings & TF-IDF with 37,178 terms; 0.041\% density\\
+DBSCAN input & 37,178-dimensional TF-IDF & 10,000-title sample reduced to 50 SVD dimensions\\
+\bottomrule
+\end{tabular}
+\end{table}
+The main text limitation is lexical variation: the same product may differ in spacing, abbreviations, model codes, colour names, or language (e.g., ``64gb'' versus ``64 gb''). TF-IDF is interpretable but does not understand semantic equivalence. Character n-grams and domain-specific normalisation are possible extensions.
+
+\section{Experiments and Results}
+\subsection{BLE-GSpeed regression}
+Linear Regression was used as a linear baseline, Random Forest as a nonlinear ensemble, and a mean predictor as a reference. Initial window-level models had negative $R^2$, meaning they performed worse than a mean predictor on that split. Adding temporal features and tuning Random Forest improved the later window-level test $R^2$ to 0.09437, but performance remained limited. Session-level aggregation produced much stronger validation results.
+\begin{table}[t]
+\caption{BLE-GSpeed regression results}
+\centering\scriptsize
+\begin{tabular}{p{0.31\columnwidth}rrrr}
+\toprule Model / experiment & MAE & RMSE & $R^2$ & Within $\pm0.1$\\\midrule
+Initial window LR (test) & 0.20506 & 0.26440 & -0.01178 & 35.04\%\\
+Initial window RF (test) & 0.21132 & 0.26895 & -0.04689 & 32.54\%\\
+Tuned window RF (test) & 0.18939 & -- & 0.09437 & --\\
+Session LR (validation) & 0.08948 & 0.11623 & 0.85355 & 63.79\%\\
+Session tuned RF (validation) & 0.01302 & 0.01880 & 0.99617 & 100.00\%\\
+Session mean baseline (validation) & 0.24374 & 0.30378 & -0.00037 & 31.03\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+The session-level Random Forest is the best current validation candidate. The large improvement must be checked for target leakage, target-derived features, and session overlap. Final held-out test metrics for this experiment were not supplied; therefore, the validation score is not proof of generalisation. Testing on unseen users would provide a stricter evaluation.
+
+\subsection{NSL-KDD classification}
+Logistic Regression tested $C \in \{0.1,1,10\}$. KNN tested $k \in \{3,5,7,11\}$ with uniform and distance weighting. Decision Tree tested depths None, 10, 20, and 30 with minimum leaf sizes 1, 5, and 10. Selection prioritised attack F1 and then attack recall. Selected models were refitted on train plus validation data; test data remained untouched.
+\begin{table}[t]
+\caption{NSL-KDD validation results}
+\centering\scriptsize
+\begin{tabular}{lrrrrrr}
+\toprule Model & Acc. & Prec. & Rec. & F1 & ROC & PR\\\midrule
+Decision Tree & 0.9952 & 0.9950 & 0.9948 & 0.9949 & 0.9952 & 0.9922\\
+KNN & 0.9944 & 0.9939 & 0.9941 & 0.9940 & 0.9973 & 0.9959\\
+Logistic Regression & 0.9533 & 0.9554 & 0.9437 & 0.9495 & 0.9883 & 0.9887\\
+\bottomrule
+\end{tabular}
+\end{table}
+\begin{table}[t]
+\caption{NSL-KDD held-out test results}
+\centering\scriptsize
+\begin{tabular}{lrrrrrrr}
+\toprule Model & Acc. & Prec. & Rec. & F1 & Bal. Acc. & ROC & PR\\\midrule
+Decision Tree & 0.9954 & 0.9949 & 0.9952 & 0.9951 & 0.9954 & 0.9957 & 0.9927\\
+KNN & 0.9951 & 0.9944 & 0.9950 & 0.9947 & 0.9951 & 0.9982 & 0.9973\\
+Logistic Regression & 0.9525 & 0.9569 & 0.9402 & 0.9485 & 0.9517 & 0.9880 & 0.9883\\
+\bottomrule
+\end{tabular}
+\end{table}
+Decision Tree achieved the best threshold-based test results: 99.54\% accuracy, 99.52\% attack recall, and 99.51\% attack F1. KNN was close on these metrics and had the highest ROC-AUC (0.9982) and PR-AUC (0.9973), but its measured prediction time was 1.1853 s compared with 0.0014 s for Decision Tree. Logistic Regression prediction time was 0.0006 s, but attack recall was lower at 94.02\%. Its confusion matrix contained 9,729 true normal predictions, 8,269 correctly detected attacks, 372 false positives, and 526 false negatives. These results are dataset-specific and do not guarantee performance on live network traffic.
+
+\subsection{Product clustering}
+K-Means++ was evaluated for $K=2$ to $15$. Inertia decreased from 34,715.357 at $K=2$ to 32,807.997 at $K=15$, but the curve had no decisive elbow. The best sampled cosine silhouette was 0.0489 at $K=14$.
+\begin{table}[t]
+\caption{K-Means++ elbow and silhouette results}
+\centering\scriptsize
+\begin{tabular}{rrr}
+\toprule $K$ & Inertia & Silhouette\\\midrule
+2 & 34715.357 & 0.0117\\3 & 34411.202 & 0.0173\\4 & 34174.580 & 0.0228\\
+5 & 34014.350 & 0.0260\\6 & 33786.178 & 0.0322\\7 & 33674.998 & 0.0342\\
+8 & 33512.972 & 0.0343\\9 & 33413.989 & 0.0375\\10 & 33267.776 & 0.0393\\
+11 & 33177.116 & 0.0414\\12 & 33060.866 & 0.0426\\13 & 32929.256 & 0.0418\\
+14 & 32831.701 & 0.0489\\15 & 32807.997 & 0.0472\\
+\bottomrule
+\end{tabular}
+\end{table}
+The low silhouette values indicate overlapping clusters. Some groups were coherent (e.g., multiple Bosch microwave listings), while others mixed appliance types. DBSCAN on the 10,000-title reduced sample found 273 non-noise clusters and marked 4,671 records (46.71\%) as noise. The large noise share and many small clusters suggest parameter sensitivity and a representation that does not yet yield compact density groups. Post-hoc category-label NMI was reported as 0.6326 for K-Means and 0.3964 for DBSCAN; these indicate association with broad categories, not proof of exact-product deduplication. Confirm these values against the executed notebook before submission.
+
+\begin{table}[t]
+\caption{Clustering comparison}
+\centering\scriptsize
+\begin{tabular}{p{0.25\columnwidth}p{0.28\columnwidth}p{0.36\columnwidth}}
+\toprule Method & Result & Interpretation\\\midrule
+K-Means++ ($K=14$) & Silhouette=0.0489; no clear elbow & Complete partition but weak separation\\
+DBSCAN & 273 clusters; 46.71\% noise & Finds local groups but fragmented\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Cross-Task Discussion}
+The largest BLE improvement followed alignment of features with the session-level target, but test evaluation remains outstanding. For NSL-KDD, Decision Tree had the strongest default-threshold detection and low prediction time, while KNN ranked probabilities best by ROC-AUC and PR-AUC at a higher inference cost. For product clustering, TF-IDF provided a scalable, interpretable baseline, but low silhouette and high DBSCAN noise indicate that more work is needed.
+\begin{table*}[t]
+\caption{Summary of best available evidence}
+\centering\small
+\begin{tabular}{p{0.14\textwidth}p{0.20\textwidth}p{0.29\textwidth}p{0.27\textwidth}}
+\toprule Task & Candidate & Best evidence & Conclusion\\\midrule
+BLE-GSpeed & Tuned Random Forest & Validation MAE=0.01302, RMSE=0.01880, $R^2=0.99617$ & Promising validation result; held-out test required\\
+NSL-KDD & Decision Tree; KNN comparison & DT test accuracy=0.9954, F1=0.9951; KNN ROC-AUC=0.9982, PR-AUC=0.9973 & DT best threshold metrics and speed; KNN best ranking metrics\\
+Product titles & K-Means++ and DBSCAN & K-Means $K=14$ silhouette=0.0489; DBSCAN noise=46.71\% & Exploratory baseline requiring improved representation/tuning\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Limitations and Future Work}
+For BLE-GSpeed, run the final session-level test evaluation, audit features for target or post-outcome leakage, compare 250-ms, 500-ms, and 1,000-ms windows, and test on unseen users. For NSL-KDD, retain the untouched test set, consider one-hot encoding, inspect per-class errors, and evaluate on independent network data. For product clustering, normalise model codes, units, colours, punctuation, and multilingual variants; test character n-grams; tune $K$, DBSCAN \texttt{eps} and \texttt{min\_samples}; and inspect representative titles. Across tasks, record data versions, random seeds, library versions, and exact preprocessing settings.
+
+\section{Conclusion}
+This paper presented three machine-learning studies. BLE-GSpeed showed that matching aggregation to the session-level target substantially improved validation, though held-out testing remains necessary. In NSL-KDD, leakage-aware scaling and training-only SMOTE supported a fair comparison; Decision Tree had the strongest threshold-based test results, while KNN had the highest ROC-AUC and PR-AUC. Product-title clustering showed that TF-IDF supports exploratory clustering, but low silhouette and high DBSCAN noise reveal substantial overlap. Appropriate preprocessing, validation, and cautious interpretation are essential across all three tasks.
+
+% Flush all pending single- and double-column floats before the bibliography.
+% This ensures Table 9 and any other deferred tables appear before References.
+\clearpage
+\balance
+\begin{thebibliography}{00}
+\bibitem{breiman} L. Breiman, ``Random forests,'' \emph{Machine Learning}, vol. 45, pp. 5--32, 2001.
+\bibitem{ester} M. Ester, H.-P. Kriegel, J. Sander, and X. Xu, ``A density-based algorithm for discovering clusters in large spatial databases with noise,'' in \emph{Proc. KDD}, 1996, pp. 226--231.
+\bibitem{salton} G. Salton and C. Buckley, ``Term-weighting approaches in automatic text retrieval,'' \emph{Information Processing \& Management}, vol. 24, no. 5, pp. 513--523, 1988.
+\bibitem{chawla} N. V. Chawla, K. W. Bowyer, L. O. Hall, and W. P. Kegelmeyer, ``SMOTE: Synthetic minority over-sampling technique,'' \emph{Journal of Artificial Intelligence Research}, vol. 16, pp. 321--357, 2002.
+\bibitem{tavallaee} M. Tavallaee, E. Bagheri, W. Lu, and A. A. Ghorbani, ``A detailed analysis of the KDD CUP 99 data set,'' in \emph{Proc. IEEE Symp. Computational Intelligence for Security and Defense Applications}, 2009, pp. 226--231.
+\end{thebibliography}
+\end{document}
